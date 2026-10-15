@@ -484,3 +484,14 @@ class TestDebias(unittest.TestCase):
         taken[df["user"].to_numpy(), df["item"].to_numpy()] = True
         if shown_liked.any() and (~shown_liked).any():
             self.assertGreater(taken[shown_liked].mean(), taken[~shown_liked].mean())
+
+
+class TestFinalEval(unittest.TestCase):
+    def test_最終評価の世界は_開発用と重ならず_testは使用済みで拒否する(self):
+        import final_eval
+        dev = {1_000_000 + i for i in range(10)} | {2_000_000 + i for i in range(100)}
+        for split, seeds in final_eval.SPLITS.items():
+            self.assertFalse(dev & set(seeds))
+        self.assertTrue(all(sd >= 3_000_000 for sd in final_eval.SPLITS["test"]))
+        self.assertFalse(set(final_eval.SPLITS["val"]) & set(final_eval.SPLITS["test"]))
+

@@ -40,16 +40,18 @@ Phase0 合成データ生成器（本当の好み＋偏った観測）・評価�
 
 ## 現状
 
-**Phase0（合成データ・指標・基準）・Phase1（評価の落とし穴）・Phase2（近傍法）・Phase3（行列分解）・Phase4（コールドスタートとコンテンツ併用）・Phase5（偏りの補正とフィードバックループ）完了。** 次は Phase6（最終評価・最終レポート）。進め方は [PLAN.md](PLAN.md)。pc_docs運用マニュアルのコピーは [recsys-lab.md](recsys-lab.md)。
+**Phase0（合成データ・指標・基準）・Phase1（評価の落とし穴）・Phase2（近傍法）・Phase3（行列分解）・Phase4（コールドスタートとコンテンツ併用）・Phase5（偏りの補正とフィードバックループ）・Phase6（最終評価）完了。全Phase完了。** 最終レポートは [REPORT.md](REPORT.md)、Notebook実行結果のまとめは [notebooks/README.md](notebooks/README.md)。進め方は [PLAN.md](PLAN.md)。pc_docs運用マニュアルのコピーは [recsys-lab.md](recsys-lab.md)。
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install numpy pandas scipy scikit-learn matplotlib ipykernel
-.venv/bin/python -m unittest discover -s tests   # テスト（55件）
+.venv/bin/python -m unittest discover -s tests   # テスト（56件）
 .venv/bin/python src/run_phase1.py               # 評価の落とし穴（約10秒）
 .venv/bin/python src/run_phase2.py               # 近傍法（約25秒）
 .venv/bin/python src/run_phase3.py               # 行列分解（約40秒）
 .venv/bin/python src/run_phase4.py               # コールドスタート（約2分）
 .venv/bin/python src/run_phase5.py               # 偏りの補正とフィードバックループ（約2分半）
+.venv/bin/python src/final_eval.py --split val   # 最終評価の予行演習（約30秒）
+.venv/bin/python src/final_eval.py --split test  # 最終評価（1回だけ。使用済みだと拒否される）
 ```
 
 Notebook は `notebooks/`（カーネル名「Python (recsys_lab)」）。

@@ -8,6 +8,8 @@ data/*
 outputs/*
 !data/.gitkeep
 !outputs/.gitkeep
+!outputs/final/
+!outputs/final/*
 
 *.pt
 *.pth

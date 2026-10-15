@@ -1,0 +1,31 @@
+{
+  "used_at": "2026-10-15T12:38:16",
+  "config": {
+    "als": {
+      "k": 4,
+      "reg": 5.0
+    },
+    "bpr": {
+      "k": 16,
+      "lr": 0.05,
+      "reg": 0.01,
+      "epochs": 40,
+      "neg_pop_power": 1.0
+    },
+    "knn": {
+      "mode": "liked",
+      "alpha": 0.5,
+      "shrink": 5.0
+    },
+    "penalty_lambda": 0.05,
+    "new_user_n": 5,
+    "new_item_m": [
+      0,
+      5
+    ]
+  },
+  "seeds": [
+    3000000
+  ],
+  "note": "testは最終評価で使用済み。設定は開発用の世界で選んで固定した"
+}
