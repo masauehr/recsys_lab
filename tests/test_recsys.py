@@ -222,3 +222,69 @@ class TestPhase1(unittest.TestCase):
             t = [evaluate_true(topk_items(s, ex, 10), w.true_rating(), ex)["precision@10"] for s in S.values()]
             return spearmanr(o, t)[0]
         self.assertGreater(corr(0.0), corr(1.5))
+
+
+class TestNeighbors(unittest.TestCase):
+    def test_行列の形と値(self):
+        from recsys_models import interaction_matrix
+        df = pd.DataFrame({"user": [0, 0, 1], "item": [0, 2, 1], "rating": [5, 2, 4]})
+        m = interaction_matrix(df, 2, 3, "interactions")
+        self.assertEqual(m.tolist(), [[1, 0, 1], [0, 1, 0]])
+        self.assertEqual(interaction_matrix(df, 2, 3, "liked").tolist(), [[1, 0, 0], [0, 1, 0]])
+
+    def test_アイテム類似度は対称で対角は0(self):
+        from recsys_models import item_similarity
+        B = (np.random.default_rng(0).random((30, 8)) < 0.4).astype(float)
+        s = item_similarity(B, 0.5)
+        self.assertTrue(np.allclose(s, s.T))
+        self.assertTrue(np.allclose(np.diag(s), 0.0))
+
+    def test_近傍数kで各行の非ゼロは高々k(self):
+        from recsys_models import item_similarity
+        B = (np.random.default_rng(1).random((60, 10)) < 0.5).astype(float)
+        s = item_similarity(B, 0.5, k=3)
+        self.assertTrue(((s > 0).sum(axis=1) <= 3).all())
+
+    def test_収縮は共起の少ない類似度を小さくする(self):
+        from recsys_models import item_similarity
+        B = np.array([[1, 1, 0], [1, 1, 0], [1, 0, 1]], dtype=float)     # 商品0-1の共起は2、0-2の共起は1
+        a, b = item_similarity(B, 0.5, 0.0), item_similarity(B, 0.5, 5.0)
+        self.assertTrue((b <= a + 1e-12).all())
+        self.assertLess(b[0, 2] / a[0, 2], b[0, 1] / a[0, 1])             # 共起が少ないほうが、より小さくなる
+
+    def test_一緒に評価される商品を薦める(self):
+        from recsys_models import item_knn_scores
+        df = pd.DataFrame({"user": [0, 0, 1, 1, 2], "item": [0, 1, 0, 1, 0], "rating": [5] * 5})
+        S = item_knn_scores(df, 3, 3, "interactions", 0.5, 0.0)
+        self.assertGreater(S[2, 1], S[2, 2])        # ユーザー2は商品0を評価 → 商品0と一緒に評価される商品1が、商品2より上
+
+    def test_ユーザー型は似たユーザーが好きな商品を薦める(self):
+        from recsys_models import user_knn_scores
+        df = pd.DataFrame({"user": [0, 0, 1, 1, 1, 2], "item": [0, 1, 0, 1, 2, 3], "rating": [5] * 6})
+        S = user_knn_scores(df, 3, 4, "interactions", 0.5, 0.0)
+        self.assertGreater(S[0, 2], S[0, 3])        # ユーザー0に似たユーザー1が評価した商品2のほうが、似ていないユーザー2の商品3より上
+
+    def test_評価した入力の近傍法は人気順に近い(self):
+        from scipy.stats import spearmanr
+        from recsys_models import item_knn_scores
+        d = make_dataset(1_000_000)
+        w, tr = d.world, d.train()
+        S = item_knn_scores(tr, w.n_users, w.n_items, "interactions", 0.5, 5.0)
+        pop = popularity_scores(tr, w.n_users, w.n_items)[0]
+        self.assertGreater(spearmanr(S.mean(axis=0), pop)[0], 0.9)
+
+    def test_好きを入力にすると本当の好みでの当たりが上がる(self):
+        from recsys_models import item_knn_scores
+        d = make_dataset(1_000_000)
+        w, tr = d.world, d.train()
+        ex = exclusion_mask(w.n_users, w.n_items, tr)
+        prec = lambda S: evaluate_true(topk_items(S, ex, 10), w.true_rating(), ex)["precision@10"]    # noqa: E731
+        a = prec(item_knn_scores(tr, w.n_users, w.n_items, "interactions", 0.5, 5.0))
+        b = prec(item_knn_scores(tr, w.n_users, w.n_items, "liked", 0.5, 5.0))
+        self.assertGreater(b, a + 0.05)
+
+    def test_評価ゼロのユーザーにはスコアが出ない(self):
+        from recsys_models import item_knn_scores
+        df = pd.DataFrame({"user": [0, 0], "item": [0, 1], "rating": [5, 5]})
+        S = item_knn_scores(df, 2, 3, "interactions", 0.5, 0.0)
+        self.assertTrue((S[1] == 0).all())           # ユーザー1は評価が無い（コールドスタート）
