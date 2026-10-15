@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# 生成データ・結果は再現可能なため管理外（コードとmdだけを管理する）
+data/*
+outputs/*
+!data/.gitkeep
+!outputs/.gitkeep
+
+*.pt
+*.pth
+.env
