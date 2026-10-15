@@ -288,3 +288,88 @@ class TestNeighbors(unittest.TestCase):
         df = pd.DataFrame({"user": [0, 0], "item": [0, 1], "rating": [5, 5]})
         S = item_knn_scores(df, 2, 3, "interactions", 0.5, 0.0)
         self.assertTrue((S[1] == 0).all())           # ユーザー1は評価が無い（コールドスタート）
+
+
+class TestFactorization(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = make_dataset(1_000_000)
+        w = cls.d.world
+        cls.U, cls.I = w.n_users, w.n_items
+        cls.tr, cls.val = cls.d.train(), cls.d.split("val")
+        cls.excl = exclusion_mask(cls.U, cls.I, cls.tr)
+
+    def test_低ランクの評価行列を復元できる(self):
+        from recsys_models import als_fit
+        rng = np.random.default_rng(0)
+        Pt, Qt = rng.normal(0, 1, (60, 2)), rng.normal(0, 1, (40, 2))
+        R = 3.5 + Pt @ Qt.T * 0.5
+        mask = rng.random(R.shape) < 0.5
+        u, i = np.where(mask)
+        df = pd.DataFrame({"user": u, "item": i, "rating": R[mask]})
+        m = als_fit(df, 60, 40, k=2, reg=0.1, iters=30)
+        pred = m.predict()
+        self.assertLess(np.sqrt(np.mean((pred[~mask] - R[~mask]) ** 2)), 0.3)     # 見ていない組も、よく当てる
+
+    def test_予測の形と学習データへの当てはまり(self):
+        from recsys_models import als_fit
+        m = als_fit(self.tr, self.U, self.I, k=4, reg=5.0)
+        P = m.predict()
+        self.assertEqual(P.shape, (self.U, self.I))
+        train_rmse = rating_errors(P, self.tr)["RMSE"]
+        self.assertLess(train_rmse, rating_errors(P, self.val)["RMSE"])            # 学習データのほうが、当てはまりが良い
+
+    def test_評価ゼロのユーザーは平均と商品のバイアスだけ(self):
+        from recsys_models import als_fit
+        df = self.tr[self.tr["user"] != 0]
+        m = als_fit(df, self.U, self.I, k=4, reg=5.0)
+        self.assertTrue(np.allclose(m.predict()[0], m.mu + m.bi))
+
+    def test_同じシードなら同じ結果(self):
+        from recsys_models import als_fit, bpr_fit
+        a = als_fit(self.tr, self.U, self.I, k=4, reg=5.0, seed=1).predict()
+        b = als_fit(self.tr, self.U, self.I, k=4, reg=5.0, seed=1).predict()
+        self.assertTrue(np.allclose(a, b))
+        c = bpr_fit(self.tr, self.U, self.I, k=8, epochs=5, seed=2).predict()
+        e = bpr_fit(self.tr, self.U, self.I, k=8, epochs=5, seed=2).predict()
+        self.assertTrue(np.allclose(c, e))
+
+    def test_ALSは本当の好みで平均評価順を上回り_観測では人気順を下回る(self):
+        from recsys_models import als_fit
+        P = als_fit(self.tr, self.U, self.I, k=4, reg=5.0).predict()
+        tk = topk_items(P, self.excl, 10)
+        true = evaluate_true(tk, self.d.world.true_rating(), self.excl)["precision@10"]
+        base = evaluate_true(topk_items(item_mean_scores(self.tr, self.U, self.I), self.excl, 10), self.d.world.true_rating(), self.excl)["precision@10"]
+        self.assertGreater(true, base + 0.08)
+        obs = evaluate_observed(P, tk, self.val, self.U, self.I)["ndcg@10"]
+        pop = popularity_scores(self.tr, self.U, self.I)
+        self.assertLess(obs, evaluate_observed(pop, topk_items(pop, self.excl, 10), self.val, self.U, self.I)["ndcg@10"])
+
+    def test_BPRは好きな商品を知らない商品より上にする(self):
+        from recsys_models import bpr_fit
+        m = bpr_fit(self.tr, self.U, self.I, k=16, epochs=30, seed=0)
+        P = m.predict()
+        pos = self.tr[self.tr["rating"] >= 4]
+        rng = np.random.default_rng(0)
+        j = rng.integers(0, self.I, len(pos))
+        ok = ~((self.excl[pos["user"].to_numpy(), j]))
+        auc = (P[pos["user"].to_numpy(), pos["item"].to_numpy()][ok] > P[pos["user"].to_numpy(), j][ok]).mean()
+        self.assertGreater(auc, 0.8)
+
+    def test_人気に比例した外し役は_人気の偏りを弱める(self):
+        from recsys_models import bpr_fit
+        pop = popularity_scores(self.tr, self.U, self.I)[0]
+        def mean_pop(npp):
+            S = bpr_fit(self.tr, self.U, self.I, k=16, epochs=30, neg_pop_power=npp, seed=0).predict()
+            return pop[topk_items(S, self.excl, 10)].mean()
+        self.assertGreater(mean_pop(0.0), mean_pop(1.0) * 2)
+
+    def test_部分空間の重なり(self):
+        from run_phase3 import subspace_overlap
+        rng = np.random.default_rng(0)
+        X = rng.normal(0, 1, (50, 3))
+        X = X - X.mean(0)                                   # 列の平均を0にしてから直交化（平均0の空間にする）
+        V = np.linalg.qr(X)[0]
+        self.assertAlmostEqual(subspace_overlap(V @ rng.normal(0, 1, (3, 3)), V), 1.0, places=6)   # 同じ空間なら 1
+        W = rng.normal(0, 1, (50, 3))
+        self.assertLess(subspace_overlap(W, V), 0.4)                                                # 無関係な空間なら、小さい

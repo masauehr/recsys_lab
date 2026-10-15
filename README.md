@@ -40,13 +40,14 @@ Phase0 合成データ生成器（本当の好み＋偏った観測）・評価�
 
 ## 現状
 
-**Phase0（合成データ・指標・基準）・Phase1（評価の落とし穴）・Phase2（近傍法）完了。** 次は Phase3（行列分解）。進め方は [PLAN.md](PLAN.md)。pc_docs運用マニュアルのコピーは [recsys-lab.md](recsys-lab.md)。
+**Phase0（合成データ・指標・基準）・Phase1（評価の落とし穴）・Phase2（近傍法）・Phase3（行列分解）完了。** 次は Phase4（コールドスタートとコンテンツ併用）。進め方は [PLAN.md](PLAN.md)。pc_docs運用マニュアルのコピーは [recsys-lab.md](recsys-lab.md)。
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install numpy pandas scipy scikit-learn matplotlib ipykernel
-.venv/bin/python -m unittest discover -s tests   # テスト（38件）
+.venv/bin/python -m unittest discover -s tests   # テスト（46件）
 .venv/bin/python src/run_phase1.py               # 評価の落とし穴（約10秒）
 .venv/bin/python src/run_phase2.py               # 近傍法（約25秒）
+.venv/bin/python src/run_phase3.py               # 行列分解（約40秒）
 ```
 
 Notebook は `notebooks/`（カーネル名「Python (recsys_lab)」）。
