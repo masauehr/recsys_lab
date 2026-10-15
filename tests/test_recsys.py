@@ -155,6 +155,7 @@ class TestBaselines(unittest.TestCase):
         self.assertAlmostEqual(rnd["precision@10"], base, delta=0.05)
 
 
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -373,3 +374,63 @@ class TestFactorization(unittest.TestCase):
         self.assertAlmostEqual(subspace_overlap(V @ rng.normal(0, 1, (3, 3)), V), 1.0, places=6)   # 同じ空間なら 1
         W = rng.normal(0, 1, (50, 3))
         self.assertLess(subspace_overlap(W, V), 0.4)                                                # 無関係な空間なら、小さい
+
+
+class TestColdStart(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = make_dataset(1_000_000)
+        w = cls.d.world
+        cls.U, cls.I = w.n_users, w.n_items
+        cls.tr = cls.d.train()
+
+    def test_ジャンル好みは_ユーザーの高評価ジャンルを上にする(self):
+        from recsys_models import genre_profile_scores
+        tr = pd.DataFrame({"user": [0, 0, 0, 0], "item": [0, 1, 2, 3], "rating": [5, 5, 1, 1]})
+        genre = np.array([0, 0, 1, 1, 2])
+        S = genre_profile_scores(tr, genre, 1, 3, weight=1.0)
+        self.assertGreater(S[0, 0], S[0, 4])        # 高く評価したジャンル 0 > 評価の無いジャンル 2（全体平均に寄る）
+        self.assertGreater(S[0, 4], S[0, 2])        # 評価の無いジャンル 2 > 低く評価したジャンル 1
+        self.assertEqual(S[0, 0], S[0, 1])          # 同じジャンルは同点
+
+    def test_評価0件の新商品は_事前分布そのもの(self):
+        from recsys_models import als_fit, fold_in_items
+        m = als_fit(self.tr, self.U, self.I, k=4, reg=5.0)
+        cold = np.array([3, 7])
+        prior = np.tile(np.array([0.5, 0.1, 0.2, 0.3, 0.4]), (2, 1))
+        S = fold_in_items(m, self.tr.iloc[:0], cold, prior)
+        want = m.mu + m.bu + 0.5 + m.P @ prior[0, 1:]
+        self.assertTrue(np.allclose(S[:, 3], want))
+        self.assertTrue(np.allclose(S[:, 0], m.predict()[:, 0]))      # 他の商品は変わらない
+
+    def test_評価が増えると_新商品の因子は事前分布から離れてデータに近づく(self):
+        from recsys_models import als_fit, fold_in_items
+        m = als_fit(self.tr, self.U, self.I, k=4, reg=5.0)
+        i = int(self.tr.groupby("item").size().idxmax())
+        d = self.tr[self.tr["item"] == i]
+        prior = np.zeros((1, 5))
+        S0 = fold_in_items(m, d.iloc[:0], np.array([i]), prior)[:, i]
+        S1 = fold_in_items(m, d, np.array([i]), prior)[:, i]
+        full = m.predict()[:, i]
+        self.assertLess(np.abs(S1 - full).mean(), np.abs(S0 - full).mean())
+
+    def test_新ユーザーのフォールドインは_評価が無ければ_バイアスモデル(self):
+        from recsys_models import als_fit, fold_in_users
+        m = als_fit(self.tr, self.U, self.I, k=4, reg=5.0)
+        S = fold_in_users(m, self.tr.iloc[:0], np.array([5]))
+        self.assertTrue(np.allclose(S[5], m.mu + m.bi))
+        self.assertTrue(np.allclose(S[0], m.predict()[0]))             # 他のユーザーは変わらない
+
+    def test_新ユーザーは_評価が増えるほど本当の好みに合う(self):
+        from recsys_eval import rating_rmse_all
+        from recsys_models import als_fit, fold_in_users
+        w = self.d.world
+        cold = np.arange(0, 100)
+        warm_tr = self.tr[~self.tr["user"].isin(cold)]
+        m = als_fit(warm_tr, self.U, self.I, k=4, reg=5.0)
+        full = self.tr[self.tr["user"].isin(cold)].sort_values("time")
+        err = []
+        for n in (0, 10, 40):
+            S = fold_in_users(m, full.groupby("user").head(n) if n else full.iloc[:0], cold)
+            err.append(rating_rmse_all(S[cold], w.true_rating()[cold]))
+        self.assertGreater(err[0], err[2])

@@ -3,3 +3,4 @@ from .neighbors import (  # noqa: F401
     interaction_matrix, item_knn_rating_pred, item_knn_scores, item_similarity, user_knn_scores, user_similarity,
 )
 from .factorization import MF, als_fit, bpr_fit  # noqa: F401
+from .content import fold_in_items, fold_in_users, genre_prior, genre_profile_scores  # noqa: F401
