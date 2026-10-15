@@ -434,3 +434,53 @@ class TestColdStart(unittest.TestCase):
             S = fold_in_users(m, full.groupby("user").head(n) if n else full.iloc[:0], cold)
             err.append(rating_rmse_all(S[cold], w.true_rating()[cold]))
         self.assertGreater(err[0], err[2])
+
+
+class TestDebias(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = make_dataset(1_000_000)
+        w = cls.d.world
+        cls.U, cls.I = w.n_users, w.n_items
+        cls.tr = cls.d.train()
+
+    def test_傾向は人気の商品ほど大きく_重みは逆になる(self):
+        from recsys_eval import ipw_weights, item_propensity
+        prop = item_propensity(self.tr, self.U, self.I)
+        cnt = np.bincount(self.tr["item"], minlength=self.I)
+        self.assertGreater(prop[cnt.argmax()], prop[cnt.argmin()])
+        w = ipw_weights(self.tr, prop, 1.0)
+        self.assertAlmostEqual(float(w.mean()), 1.0, places=9)
+        lo = np.flatnonzero(cnt > 0)[cnt[cnt > 0].argmin()]                                # 評価が1件以上ある、最も少ない商品
+        i_hi, i_lo = self.tr["item"].to_numpy() == cnt.argmax(), self.tr["item"].to_numpy() == lo
+        self.assertLess(w[i_hi].mean(), w[i_lo].mean())
+        self.assertTrue(np.allclose(ipw_weights(self.tr, prop, 0.0), 1.0))           # γ=0 は重み無し
+
+    def test_重み付きrecallは_稀な商品の当たりを重く見る(self):
+        from recsys_eval import recall_observed
+        test = pd.DataFrame({"user": [0, 0], "item": [0, 1], "rating": [5, 5]})
+        topk = np.array([[0, 2]])                                                     # 商品0だけ当たり
+        self.assertAlmostEqual(recall_observed(topk, test, 1, 3), 0.5)
+        self.assertAlmostEqual(recall_observed(topk, test, 1, 3, weight=np.array([1.0, 3.0, 1.0])), 0.25)   # 当たりが軽い商品なら下がる
+
+    def test_ALSの重みが全部1なら重み無しと同じ_偏れば結果が変わる(self):
+        from recsys_models import als_fit
+        a = als_fit(self.tr, self.U, self.I, k=4, reg=5.0).predict()
+        b = als_fit(self.tr, self.U, self.I, k=4, reg=5.0, sample_weight=np.ones(len(self.tr))).predict()
+        self.assertTrue(np.allclose(a, b))
+        wt = np.where(self.tr["item"].to_numpy() < 50, 5.0, 1.0)
+        c = als_fit(self.tr, self.U, self.I, k=4, reg=5.0, sample_weight=wt).predict()
+        self.assertFalse(np.allclose(a, c))
+
+    def test_消費のシミュレーション_好きな商品ほど評価される(self):
+        from run_phase5 import _consume
+        w = self.d.world
+        rng = np.random.default_rng(0)
+        recs = np.tile(np.arange(10), (self.U, 1))
+        df = _consume(w, recs, rng, organic=0)
+        tru = w.true_rating()
+        shown_liked = tru[:, :10] >= 4
+        taken = np.zeros((self.U, 10), bool)
+        taken[df["user"].to_numpy(), df["item"].to_numpy()] = True
+        if shown_liked.any() and (~shown_liked).any():
+            self.assertGreater(taken[shown_liked].mean(), taken[~shown_liked].mean())

@@ -4,3 +4,4 @@ from .metrics import (  # noqa: F401
 )
 from .baselines import item_mean_scores, oracle_scores, popularity_scores, random_scores  # noqa: F401
 from .predictors import bias_pred, global_mean_pred, item_mean_pred, user_mean_pred  # noqa: F401
+from .debias import ipw_weights, item_propensity, recall_observed  # noqa: F401

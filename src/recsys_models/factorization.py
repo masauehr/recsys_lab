@@ -26,18 +26,24 @@ def _solve_side(groups, other_feat, target, n, k, reg, reg_bias):
     """片側（ユーザー or 商品）の、バイアスと因子を、リッジ回帰で解く。other_feat は、相手側の [1, 因子]"""
     out = np.zeros((n, k + 1))
     lam = np.diag([reg_bias] + [reg] * k)
-    for idx, (others, y) in groups.items():
+    for idx, g in groups.items():
+        others, y = g[0], g[1]
         X = other_feat[others]
-        out[idx] = np.linalg.solve(X.T @ X + lam, X.T @ y)
+        if len(g) > 2 and g[2] is not None:                      # 重み付き（逆確率重み付けなど）
+            out[idx] = np.linalg.solve(X.T @ (X * g[2][:, None]) + lam, X.T @ (y * g[2]))
+        else:
+            out[idx] = np.linalg.solve(X.T @ X + lam, X.T @ y)
     return out
 
 
 def als_fit(train: pd.DataFrame, n_users: int, n_items: int, k: int = 8, reg: float = 5.0, reg_bias_user: float = 5.0,
-            reg_bias_item: float = 10.0, iters: int = 15, seed: int = 0) -> MF:
-    """ALS。評価の点数（rating − μ）を、二乗誤差で当てる。reg は因子の正則化（大きいほど、因子が小さく＝単純に）"""
+            reg_bias_item: float = 10.0, iters: int = 15, seed: int = 0, sample_weight: np.ndarray | None = None) -> MF:
+    """ALS。評価の点数（rating − μ）を、二乗誤差で当てる。reg は因子の正則化（大きいほど、因子が小さく＝単純に）。
+    sample_weight: 学習データの行ごとの重み（逆確率重み付けなど。None なら全部 1）"""
     rng = np.random.default_rng(seed)
     u, i, r = train["user"].to_numpy(), train["item"].to_numpy(), train["rating"].to_numpy(dtype=float)
-    mu = r.mean()
+    wt = np.ones(len(r)) if sample_weight is None else np.asarray(sample_weight, dtype=float)
+    mu = float(np.average(r, weights=wt))
     P = rng.normal(0, 0.1, (n_users, k)); Q = rng.normal(0, 0.1, (n_items, k))
     bu, bi = np.zeros(n_users), np.zeros(n_items)
     by_user = {int(x): (i[u == x], None) for x in np.unique(u)}
@@ -45,12 +51,12 @@ def als_fit(train: pd.DataFrame, n_users: int, n_items: int, k: int = 8, reg: fl
     for it in range(iters):
         # ユーザーを更新（商品側の [1, q_i] を固定）。目標は、評価 − μ − b_i
         feat_i = np.hstack([np.ones((n_items, 1)), Q])
-        groups = {x: (items, r[u == x] - mu - bi[items]) for x, (items, _) in by_user.items()}
+        groups = {x: (items, r[u == x] - mu - bi[items], wt[u == x]) for x, (items, _) in by_user.items()}
         sol = _solve_side(groups, feat_i, None, n_users, k, reg, reg_bias_user)
         bu, P = sol[:, 0], sol[:, 1:]
         # 商品を更新（ユーザー側の [1, p_u] を固定）。目標は、評価 − μ − b_u
         feat_u = np.hstack([np.ones((n_users, 1)), P])
-        groups = {x: (users, r[i == x] - mu - bu[users]) for x, (users, _) in by_item.items()}
+        groups = {x: (users, r[i == x] - mu - bu[users], wt[i == x]) for x, (users, _) in by_item.items()}
         sol = _solve_side(groups, feat_u, None, n_items, k, reg, reg_bias_item)
         bi, Q = sol[:, 0], sol[:, 1:]
     return MF(mu, bu, bi, P, Q)
