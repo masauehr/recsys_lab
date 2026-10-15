@@ -157,3 +157,68 @@ class TestBaselines(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPhase1(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from recsys_eval import (bias_pred, evaluate_observed_sampled, global_mean_pred, item_mean_pred, rating_rmse_all,
+                                 user_mean_pred)
+        cls.fns = dict(bias=bias_pred, glob=global_mean_pred, item=item_mean_pred, user=user_mean_pred,
+                       sampled=evaluate_observed_sampled, rmse_all=rating_rmse_all)
+        cls.d = make_dataset(1_000_000)
+        w = cls.d.world
+        cls.U, cls.I = w.n_users, w.n_items
+        cls.tr, cls.val = cls.d.train(), cls.d.split("val")
+        cls.excl = exclusion_mask(cls.U, cls.I, cls.tr)
+
+    def test_バイアスモデルはRMSEが最も小さい(self):
+        r = {k: rating_errors(self.fns[k](self.tr, self.U, self.I), self.val)["RMSE"] for k in ("glob", "item", "user", "bias")}
+        self.assertLess(r["bias"], r["item"])
+        self.assertLess(r["item"], r["glob"])
+        self.assertLess(r["user"], r["glob"])
+
+    def test_ユーザー平均はRMSEが改善しても順位は変わらない(self):
+        """ユーザー平均は、1人の全商品に同じ値を予測する。RMSEは下がるが、商品の差がないので、順位の良さは全体平均と同じ（同点）"""
+        g, u = self.fns["glob"](self.tr, self.U, self.I), self.fns["user"](self.tr, self.U, self.I)
+        self.assertLess(rating_errors(u, self.val)["RMSE"], rating_errors(g, self.val)["RMSE"] - 0.05)
+        mg = evaluate_observed(g, topk_items(g, self.excl, 10), self.val, self.U, self.I)["ndcg@10"]
+        mu = evaluate_observed(u, topk_items(u, self.excl, 10), self.val, self.U, self.I)["ndcg@10"]
+        self.assertAlmostEqual(mg, mu, delta=0.003)
+
+    def test_全部の組でのRMSE(self):
+        w = self.d.world
+        self.assertAlmostEqual(self.fns["rmse_all"](w.true_rating(), w.true_rating()), 0.0)
+        self.assertGreater(self.fns["rmse_all"](np.full_like(w.true_rating(), 1.0), w.true_rating()), 1.5)
+
+    def test_サンプリング評価は全商品の評価より高い数字が出る(self):
+        S = random_scores(self.U, self.I)
+        full = evaluate_observed(S, topk_items(S, self.excl, 10), self.val, self.U, self.I)["ndcg@10"]
+        sam = self.fns["sampled"](S, self.val, self.excl, 100)["ndcg@10"]
+        self.assertGreater(sam, full * 2)
+
+    def test_サンプリング評価の対象ユーザー数は同じ(self):
+        S = popularity_scores(self.tr, self.U, self.I)
+        a = evaluate_observed(S, topk_items(S, self.excl, 10), self.val, self.U, self.I)["評価したユーザー数"]
+        b = self.fns["sampled"](S, self.val, self.excl, 100)["評価したユーザー数"]
+        self.assertEqual(a, b)
+
+    def test_人気比例で選んだ候補では_人気順の優位が小さくなる(self):
+        S = popularity_scores(self.tr, self.U, self.I)
+        pop = S[0]
+        uni = self.fns["sampled"](S, self.val, self.excl, 100)["ndcg@10"]
+        bypop = self.fns["sampled"](S, self.val, self.excl, 100, neg_by_pop=pop)["ndcg@10"]
+        self.assertGreater(uni, bypop)
+
+    def test_評価の順位は偏りが強いほど本当の順位とずれる(self):
+        def corr(pp):
+            from scipy.stats import spearmanr
+            d = make_dataset(1_000_000, pop_power=pp)
+            w, tr, val = d.world, d.train(), d.split("val")
+            ex = exclusion_mask(w.n_users, w.n_items, tr)
+            S = {"人気順": popularity_scores(tr, w.n_users, w.n_items), "平均評価順": item_mean_scores(tr, w.n_users, w.n_items),
+                 "ランダム": random_scores(w.n_users, w.n_items), "高評価人気": popularity_scores(tr, w.n_users, w.n_items, True)}
+            o = [evaluate_observed(s, topk_items(s, ex, 10), val, w.n_users, w.n_items)["ndcg@10"] for s in S.values()]
+            t = [evaluate_true(topk_items(s, ex, 10), w.true_rating(), ex)["precision@10"] for s in S.values()]
+            return spearmanr(o, t)[0]
+        self.assertGreater(corr(0.0), corr(1.5))

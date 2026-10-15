@@ -74,6 +74,38 @@ def rating_errors(pred: np.ndarray, test: pd.DataFrame) -> dict:
     return {"RMSE": float(np.sqrt(np.mean(e ** 2))), "MAE": float(np.mean(np.abs(e)))}
 
 
+def rating_rmse_all(pred: np.ndarray, true_rating: np.ndarray) -> float:
+    """全部の組（評価されていない組も含む）での、本当の好みに対するRMSE。合成データだけが測れる。
+    観測テストでのRMSEは、評価された（＝好きなものに偏った）組だけで測るので、これより甘くなる"""
+    return float(np.sqrt(np.mean((pred - true_rating) ** 2)))
+
+
+def evaluate_observed_sampled(scores: np.ndarray, test: pd.DataFrame, exclude: np.ndarray, n_neg: int = 100, k: int = 10,
+                              seed: int = 0, neg_by_pop: np.ndarray | None = None) -> dict:
+    """サンプリング評価: 各ユーザーについて、候補を「テストで高く評価した商品 ＋ ランダムに選んだ n_neg 個の商品」だけに絞って、順位を測る。
+    全商品を候補にする評価（evaluate_observed）より、高い数字が出る。neg_by_pop を渡すと、人気に比例して選ぶ。"""
+    rng = np.random.default_rng(seed)
+    n_users, n_items = scores.shape
+    t = test[test["rating"] >= RELEVANT]
+    rel_by_user = t.groupby("user")["item"].apply(set).to_dict()
+    disc = 1.0 / np.log2(np.arange(2, k + 2))
+    prec, ndcg, hit = [], [], []
+    for u, rel in rel_by_user.items():
+        rel = np.array(sorted(rel))
+        pool = np.flatnonzero(~exclude[u] & ~np.isin(np.arange(n_items), rel))
+        p = None if neg_by_pop is None else (neg_by_pop[pool] + 1.0) / (neg_by_pop[pool] + 1.0).sum()
+        neg = rng.choice(pool, size=min(n_neg, len(pool)), replace=False, p=p)
+        cand = np.concatenate([rel, neg])
+        order = cand[np.argsort(-(scores[u, cand] + rng.random(len(cand)) * 1e-9))][:k]
+        h = np.isin(order, rel).astype(float)
+        prec.append(h.sum() / k)
+        ideal = disc[: min(len(rel), k)].sum()
+        ndcg.append((h * disc[: len(h)]).sum() / ideal)
+        hit.append(float(h.sum() > 0))
+    return {f"precision@{k}": float(np.mean(prec)), f"ndcg@{k}": float(np.mean(ndcg)), f"hit@{k}": float(np.mean(hit)),
+            "評価したユーザー数": len(rel_by_user)}
+
+
 def gini(x) -> float:
     """偏りの指標（0=完全に均等、1=1つに集中）"""
     x = np.sort(np.asarray(x, dtype=float))
