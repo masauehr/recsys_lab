@@ -58,3 +58,9 @@ Notebook は `notebooks/`（カーネル名「Python (recsys_lab)」）。
 
 ## Notebook を読むとき
 はじめての方は、まず [notebooks/00_basics.ipynb](notebooks/00_basics.ipynb)（基礎知識・用語集・読む順）から。各Notebookの冒頭には「やさしい導入」があります。
+
+## 更新履歴（セキュリティ・依存更新）
+
+| 日付 | 内容 |
+|------|------|
+| 2026-10-24 | 実行環境（venv）の依存パッケージを脆弱性点検に基づき更新（pillow 12.x → 13.0.0、pip・setuptools・certifi・filelock・urllib3 など）。単体テスト56件が全て通過。リポジトリのコード変更なし。週次の自動点検は別の非公開プロジェクトで管理している。 |
